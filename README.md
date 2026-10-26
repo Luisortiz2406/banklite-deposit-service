@@ -63,7 +63,7 @@ recarga ya abonada o el ledger rechazó el abono.
 | Publica eventos | — (el ledger publica `transaction.completed` con `direction: 'in'` al abonar: lo reciben fraud, compliance, notification y rewards) |
 | Consume eventos | — |
 | Llama a | account-service: la cuenta del cliente (con el token del cliente)<br>ledger-service: `POST /ledger/internal/cash-ins` (clave interna `deposit`) |
-| Lo llaman | api-gateway (rutas `/deposits/*`) |
+| Lo llaman | api-gateway (rutas `/deposits/*`)<br>account-service: resumen para cancelar la cuenta (`/internal/deposits/...`) |
 | Integraciones externas | **Wompi** (sandbox): widget de pago, eventos (webhook) y API de transacciones |
 
 Todo el tráfico externo entra por el **api-gateway** (único servicio público), que
@@ -122,6 +122,12 @@ A través del gateway las rutas son las mismas (`http://localhost:8080/deposits/
 | GET | `/deposits/:id` | Una recarga. |
 | POST | `/deposits/:id/sync` | `{transactionId?}`: consulta la recarga en Wompi sin esperar el webhook. |
 
+### Internos (solo red privada, `x-internal-key`; el gateway responde 404 desde afuera)
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/internal/deposits/users/:idUser/resumen-cierre` | Solo **account-service** («Cancelar mi cuenta»): `recargasPendientes` (con pago iniciado, o sin pago y vencidas hace menos de 1 h, el mismo margen del proceso de pendientes) y `recargasEnRevision`, con `sinPendientes`. |
+
 ## Variables de entorno
 
 | Variable | Obligatoria | Ejemplo / por defecto | Descripción |
@@ -129,6 +135,7 @@ A través del gateway las rutas son las mismas (`http://localhost:8080/deposits/
 | `DATABASE_URL` | **Sí** | `postgres://deposit_svc:<clave>@localhost:5432/deposit_db` | Base propia (la crea `scripts/ensure-db.js`). |
 | `JWT_SECRET` | **Sí** | — | El mismo de auth-service. |
 | `INTERNAL_API_KEY` | **Sí** | — | Clave interna **propia**. ledger-service la acepta como `deposit:<clave>`. |
+| `INTERNAL_TRUSTED_KEYS` | Para el resumen de cierre | `account:<clave-de-account>` | Quién puede pedir `/internal/deposits/...` (solo `account`). Sin ella se rechaza todo. |
 | `ACCOUNT_SERVICE_URL` | No | `http://localhost:3002` | |
 | `LEDGER_SERVICE_URL` | No | `http://localhost:3006` | |
 | `WOMPI_ENV` | **Sí** | `sandbox` | `sandbox` o `production`. Define la API (`sandbox.wompi.co` / `production.wompi.co`). |
