@@ -1,6 +1,6 @@
 # Deposit Service (`deposit-service`)
 
-[![CI](https://github.com/Luisortiz2406/banklite-deposit-service/actions/workflows/ci.yml/badge.svg)](https://github.com/Luisortiz2406/banklite-deposit-service/actions/workflows/ci.yml)
+[![Despliegue](https://github.com/Luisortiz2406/banklite-deposit-service/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/Luisortiz2406/banklite-deposit-service/actions/workflows/deploy.yml)
 
 Recargas de saldo (*cash-in*) a la cuenta BankLite con la pasarela **Wompi** en modo
 **sandbox**: tarjeta, PSE y Nequi. En sandbox no se mueve dinero real y así se dice en la
@@ -189,6 +189,22 @@ npm test   # TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postg
 - Wompi o el ledger caídos, y el reintento con la misma clave.
 - Proceso de pendientes y expiración.
 - Arranque con llaves de producción en sandbox.
+
+## Despliegue
+
+Lo despliega **GitHub Actions** (`.github/workflows/deploy.yml`, que usa el workflow
+reutilizable de [banklite-pipelines](https://github.com/Luisortiz2406/banklite-pipelines)):
+
+1. **test**: lint, formato, build y pruebas con Postgres (también en cada pull request).
+2. **docker** (solo `main`): imagen en GHCR `ghcr.io/luisortiz2406/banklite-deposit-service`,
+   etiquetada con el SHA del commit y `latest` (se guardan las últimas 5).
+3. **deploy** (solo `main`): `railway up --ci` sube el commit a Railway, que lo
+   construye con el `Dockerfile` y aplica `railway.json` (health check en `/health`);
+   el job espera a que el despliegue quede activo.
+
+El repositorio está desconectado del autodeploy de Railway: un push a `main` despliega
+solo a través de este pipeline, y únicamente si las pruebas pasan. Rollback: panel de
+Railway → *Deployments* → versión anterior → *Rollback*.
 
 ## Repositorios relacionados
 
