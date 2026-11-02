@@ -3,7 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { validateEnv } from './config/env.validation';
 import { DepositsModule } from './deposits/deposits.module';
-import { Deposit } from './deposits/entities/deposit.entity';
+import { ENTITIES } from './entities';
 import { HealthController } from './health.controller';
 import { readWompiConfig } from './wompi/wompi.config';
 
@@ -36,7 +36,7 @@ const validateCommon = validateEnv(
       useFactory: (config: ConfigService) => ({
         type: 'postgres' as const,
         url: config.get<string>('DATABASE_URL'),
-        entities: [Deposit],
+        entities: ENTITIES,
         synchronize: true,
         logging: false,
       }),
