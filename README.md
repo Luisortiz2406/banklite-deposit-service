@@ -189,6 +189,12 @@ npm test   # TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postg
 - Wompi o el ledger caídos, y el reintento con la misma clave.
 - Proceso de pendientes y expiración.
 - Arranque con llaves de producción en sandbox.
+- Cliente de Wompi (`wompi.client.spec.ts`): una respuesta rara, un estado desconocido, un monto con decimales o un cuerpo que no es JSON nunca se toma como aprobada; sin respuesta, 5xx y 401 quedan como "no disponible" y la recarga sigue pendiente.
+- Abono al ledger (`banking-client.service.spec.ts`): devuelve la respuesta tal cual para distinguir un rechazo (4xx) de una falla incierta (null), sin reintentar solo; la cuenta ajena o inexistente responde igual (403).
+- Proceso de pendientes: cada 5 minutos, nunca superpuesto, configurable (mínimo 30 s) y apagable; un error no lo detiene.
+- Controladores (el cliente siempre es el de la sesión; el webhook no usa sesión sino la firma), guard de sesión, `/health` y validación de configuración.
+
+**Cobertura:** el pipeline la muestra en el resumen de cada corrida y exige un mínimo de 70 % de líneas y 50 % de ramas (`umbral-lineas` y `umbral-ramas` en `deploy.yml`). Hoy está en 90,2 % de líneas y 85,7 % de ramas.
 
 ## Despliegue
 
