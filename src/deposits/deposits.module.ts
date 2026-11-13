@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { InternalKeyGuard } from '../common/guards/internal-key.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { MetricsModule } from '../metrics/metrics.module';
 import { InternalDepositsController } from './internal-deposits.controller';
 import { WOMPI_CONFIG, WompiClient } from '../wompi/wompi.client';
 import { readWompiConfig } from '../wompi/wompi.config';
@@ -22,7 +23,7 @@ const WOMPI_KEYS = [
 ];
 
 @Module({
-  imports: [ConfigModule, JwtModule.register({}), TypeOrmModule.forFeature([Deposit])],
+  imports: [ConfigModule, JwtModule.register({}), TypeOrmModule.forFeature([Deposit]), MetricsModule],
   controllers: [DepositsController, WompiEventsController, InternalDepositsController],
   providers: [
     {

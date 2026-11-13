@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import { In, IsNull, LessThan, MoreThan, Or, Repository } from 'typeorm';
+import { PaymentGatewayMetrics, PaymentResult } from '../metrics/payment-gateway-metrics';
 import { WOMPI_CONFIG, WompiClient, WompiTransaction, WompiUnavailableError } from '../wompi/wompi.client';
 import { WompiConfig } from '../wompi/wompi.config';
 import { integritySignature, isValidEventSignature, uuidV5, WompiEvent } from '../wompi/wompi.signatures';
@@ -40,6 +41,13 @@ const FINAL_WOMPI_STATUSES: Record<string, DepositStatus> = {
   ERROR: 'ERROR',
 };
 
+// Resultado de métricas (lista cerrada) de cada estado final de la pasarela.
+const RESULT_BY_STATUS: Partial<Record<DepositStatus, PaymentResult>> = {
+  DECLINED: 'declined',
+  VOIDED: 'voided',
+  ERROR: 'error',
+};
+
 const METHOD_LABELS: Record<string, string> = {
   CARD: 'Tarjeta',
   PSE: 'PSE',
@@ -64,7 +72,21 @@ export class DepositsService {
     private readonly wompi: WompiClient,
     @Inject(WOMPI_CONFIG) private readonly wompiConfig: WompiConfig,
     private readonly config: ConfigService,
+    private readonly metrics: PaymentGatewayMetrics,
   ) {}
+
+  /**
+   * Cuenta el resultado de un pago en payment_gateway_payments_total. NUNCA puede romper un pago ni un
+   * webhook: se llama después de guardar el cambio de estado y cualquier fallo se ignora.
+   */
+  private countPayment(result: PaymentResult | undefined) {
+    if (!result) return;
+    try {
+      this.metrics.record(result);
+    } catch {
+      // ignorar: la métrica no es parte del pago
+    }
+  }
 
   getConfig() {
     return {
@@ -270,9 +292,12 @@ export class DepositsService {
         transaction.id === deposit.wompiTransactionId &&
         transaction.status === 'VOIDED'
       ) {
-        await this.transition(deposit, { status: 'REVIEW', statusMessage: 'Wompi anuló una recarga ya abonada.' }, [
-          'APPROVED',
-        ]);
+        const changed = await this.transition(
+          deposit,
+          { status: 'REVIEW', statusMessage: 'Wompi anuló una recarga ya abonada.' },
+          ['APPROVED'],
+        );
+        if (changed) this.countPayment('voided');
         this.logger.error(`Recarga ${deposit.id}: Wompi anuló la transacción ${transaction.id} ya abonada. Revisar.`);
       }
       return this.reload(deposit);
@@ -305,7 +330,8 @@ export class DepositsService {
 
     const finalStatus = FINAL_WOMPI_STATUSES[transaction.status];
     if (finalStatus) {
-      await this.transition(deposit, { ...details, status: finalStatus });
+      const changed = await this.transition(deposit, { ...details, status: finalStatus });
+      if (changed) this.countPayment(RESULT_BY_STATUS[finalStatus]);
       this.logger.log(`Recarga ${deposit.id}: ${finalStatus} en Wompi (${transaction.id}). No se abona.`);
       return this.reload(deposit);
     }
@@ -321,11 +347,12 @@ export class DepositsService {
     });
 
     if (response?.ok) {
-      await this.transition(deposit, {
+      const changed = await this.transition(deposit, {
         status: 'APPROVED',
         ledgerTransactionId: response.body.id,
         creditedAt: new Date(),
       });
+      if (changed) this.countPayment('approved');
       this.logger.log(`Recarga ${deposit.id} abonada (Wompi ${transaction.id}, ledger ${response.body.id}).`);
       return this.reload(deposit);
     }
@@ -346,8 +373,15 @@ export class DepositsService {
   }
 
   /** Cambia el estado solo si la recarga sigue en uno de los estados esperados (evita pisar otra actualización). */
-  private async transition(deposit: Deposit, changes: Partial<Deposit>, from: DepositStatus[] = ['PENDING']) {
-    await this.deposits.update({ id: deposit.id, status: In(from) }, changes);
+  private async transition(
+    deposit: Deposit,
+    changes: Partial<Deposit>,
+    from: DepositStatus[] = ['PENDING'],
+  ): Promise<boolean> {
+    const result = await this.deposits.update({ id: deposit.id, status: In(from) }, changes);
+    // true solo si ESTA llamada cambió el estado: así cada resultado se cuenta una vez aunque el webhook,
+    // el cierre del widget y el proceso de pendientes coincidan.
+    return (result?.affected ?? 1) > 0;
   }
 
   private async reload(deposit: Deposit): Promise<Deposit> {

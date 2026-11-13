@@ -146,6 +146,7 @@ A través del gateway las rutas son las mismas (`http://localhost:8080/deposits/
 | `DEPOSIT_MIN_AMOUNT` / `DEPOSIT_MAX_AMOUNT` | No | `10000` / `2000000` | Rango de una recarga, en pesos. |
 | `PENDING_CHECK_INTERVAL_MS` | No | `300000` | Cada cuánto corre el proceso de pendientes (mínimo 30 s). |
 | `PENDING_CHECK_ENABLED` | No | `true` | `false` lo apaga. |
+| `METRICS_PORT` | No | `9100` | Puerto de `GET /metrics` (Prometheus), solo para la red privada; **no** es el puerto público (`PORT`). `off` lo apaga. |
 
 El servicio **no arranca** si:
 - falta un secreto o una llave;
@@ -175,6 +176,25 @@ Datos de prueba de Wompi:
 
 Con cualquier otra tarjeta o número, la transacción queda en `ERROR`.
 
+## Métricas de negocio (`payment_gateway_payments_total`)
+
+Además de las métricas HTTP y de Node (puerto `METRICS_PORT`, solo red privada), el servicio publica
+`payment_gateway_payments_total{result}`: pagos de recargas por resultado, con `result` de lista cerrada. Las
+métricas, etiquetas y dashboards no llevan nombres de proveedores (la ruta del webhook sale como
+`/deposits/payment-gateway/events`).
+
+| `result` | Cuándo se cuenta (en `DepositsService.apply`, una sola vez por recarga) |
+|---|---|
+| `approved` | La pasarela aprobó el pago **y el ledger abonó la recarga** (estado `APPROVED`). |
+| `declined` | La pasarela rechazó el pago (estado `DECLINED`). |
+| `voided` | La pasarela anuló el pago (estado `VOIDED`), o anuló uno que ya estaba abonado (pasa a `REVIEW`). |
+| `error` | La pasarela reportó un error en el pago (estado `ERROR`). |
+
+Se cuenta solo cuando el cambio de estado se guardó (la actualización es condicional: si el webhook, el cierre del
+widget y el proceso de pendientes coinciden, solo uno cuenta). No cuentan: pagos pendientes, recargas expiradas, monto
+distinto (`AMOUNT_MISMATCH`) ni los que quedan en `REVIEW` por un rechazo del ledger. Contar nunca rompe un pago ni
+un webhook.
+
 ## Pruebas
 
 ```bash
@@ -189,6 +209,12 @@ npm test   # TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postg
 - Wompi o el ledger caídos, y el reintento con la misma clave.
 - Proceso de pendientes y expiración.
 - Arranque con llaves de producción en sandbox.
+- Cliente de Wompi (`wompi.client.spec.ts`): una respuesta rara, un estado desconocido, un monto con decimales o un cuerpo que no es JSON nunca se toma como aprobada; sin respuesta, 5xx y 401 quedan como "no disponible" y la recarga sigue pendiente.
+- Abono al ledger (`banking-client.service.spec.ts`): devuelve la respuesta tal cual para distinguir un rechazo (4xx) de una falla incierta (null), sin reintentar solo; la cuenta ajena o inexistente responde igual (403).
+- Proceso de pendientes: cada 5 minutos, nunca superpuesto, configurable (mínimo 30 s) y apagable; un error no lo detiene.
+- Controladores (el cliente siempre es el de la sesión; el webhook no usa sesión sino la firma), guard de sesión, `/health` y validación de configuración.
+
+**Cobertura:** el pipeline la muestra en el resumen de cada corrida y exige un mínimo de 70 % de líneas y 50 % de ramas (`umbral-lineas` y `umbral-ramas` en `deploy.yml`). Hoy está en 90,2 % de líneas y 85,7 % de ramas.
 
 ## Despliegue
 
