@@ -146,6 +146,7 @@ A través del gateway las rutas son las mismas (`http://localhost:8080/deposits/
 | `DEPOSIT_MIN_AMOUNT` / `DEPOSIT_MAX_AMOUNT` | No | `10000` / `2000000` | Rango de una recarga, en pesos. |
 | `PENDING_CHECK_INTERVAL_MS` | No | `300000` | Cada cuánto corre el proceso de pendientes (mínimo 30 s). |
 | `PENDING_CHECK_ENABLED` | No | `true` | `false` lo apaga. |
+| `METRICS_PORT` | No | `9100` | Puerto de `GET /metrics` (Prometheus), solo para la red privada; **no** es el puerto público (`PORT`). `off` lo apaga. |
 
 El servicio **no arranca** si:
 - falta un secreto o una llave;
@@ -174,6 +175,25 @@ Datos de prueba de Wompi:
 | PSE | «Banco que aprueba» | «Banco que rechaza» |
 
 Con cualquier otra tarjeta o número, la transacción queda en `ERROR`.
+
+## Métricas de negocio (`payment_gateway_payments_total`)
+
+Además de las métricas HTTP y de Node (puerto `METRICS_PORT`, solo red privada), el servicio publica
+`payment_gateway_payments_total{result}`: pagos de recargas por resultado, con `result` de lista cerrada. Las
+métricas, etiquetas y dashboards no llevan nombres de proveedores (la ruta del webhook sale como
+`/deposits/payment-gateway/events`).
+
+| `result` | Cuándo se cuenta (en `DepositsService.apply`, una sola vez por recarga) |
+|---|---|
+| `approved` | La pasarela aprobó el pago **y el ledger abonó la recarga** (estado `APPROVED`). |
+| `declined` | La pasarela rechazó el pago (estado `DECLINED`). |
+| `voided` | La pasarela anuló el pago (estado `VOIDED`), o anuló uno que ya estaba abonado (pasa a `REVIEW`). |
+| `error` | La pasarela reportó un error en el pago (estado `ERROR`). |
+
+Se cuenta solo cuando el cambio de estado se guardó (la actualización es condicional: si el webhook, el cierre del
+widget y el proceso de pendientes coinciden, solo uno cuenta). No cuentan: pagos pendientes, recargas expiradas, monto
+distinto (`AMOUNT_MISMATCH`) ni los que quedan en `REVIEW` por un rechazo del ledger. Contar nunca rompe un pago ni
+un webhook.
 
 ## Pruebas
 

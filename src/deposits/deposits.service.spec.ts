@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from 'crypto';
 import { BadRequestException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Counter } from 'prom-client';
 import { DataSource, Repository } from 'typeorm';
+import { MetricsService } from '../metrics/metrics.service';
+import { PaymentGatewayMetrics } from '../metrics/payment-gateway-metrics';
 import { createTestDatabase, describeWithDb, truncateAll } from '../testing/test-database';
 import { WompiClient, WompiTransaction, WompiUnavailableError } from '../wompi/wompi.client';
 import { readWompiConfig } from '../wompi/wompi.config';
@@ -33,6 +36,7 @@ describeWithDb('DepositsService (PostgreSQL)', () => {
   let drop: () => Promise<void>;
   let repo: Repository<Deposit>;
   let service: DepositsService;
+  let metricsService: MetricsService;
 
   // Wompi simulado: transacciones por id; `down` simula que no responde.
   let wompiTransactions: Map<string, WompiTransaction>;
@@ -68,6 +72,7 @@ describeWithDb('DepositsService (PostgreSQL)', () => {
 
   beforeAll(async () => {
     ({ dataSource, drop } = await createTestDatabase('deposit', [Deposit]));
+    metricsService = new MetricsService(new ConfigService({}));
     repo = dataSource.getRepository(Deposit);
     service = new DepositsService(
       repo,
@@ -75,6 +80,7 @@ describeWithDb('DepositsService (PostgreSQL)', () => {
       wompi as unknown as WompiClient,
       wompiConfig,
       new ConfigService({ DEPOSIT_MIN_AMOUNT: '10000', DEPOSIT_MAX_AMOUNT: '2000000' }),
+      new PaymentGatewayMetrics(metricsService),
     );
   });
 
@@ -83,6 +89,7 @@ describeWithDb('DepositsService (PostgreSQL)', () => {
   beforeEach(async () => {
     await truncateAll(dataSource);
     jest.clearAllMocks();
+    (metricsService.registry.getSingleMetric('payment_gateway_payments_total') as Counter).reset();
     wompiTransactions = new Map();
     wompiDown = false;
     ledgerByKey = new Map();
@@ -122,6 +129,12 @@ describeWithDb('DepositsService (PostgreSQL)', () => {
     };
   };
   const statusOf = async (id: string) => (await repo.findOneByOrFail({ id })).status;
+  /** payment_gateway_payments_total con valor mayor que 0, como { resultado: cuenta }. */
+  const paymentsCounted = async () => {
+    const counter = metricsService.registry.getSingleMetric('payment_gateway_payments_total') as Counter;
+    const { values } = await counter.get();
+    return Object.fromEntries(values.filter((v) => v.value > 0).map((v) => [v.labels.result, v.value]));
+  };
 
   describe('crear la recarga', () => {
     it('queda PENDING con referencia única y la firma de integridad del monto fijado por el servidor', async () => {
@@ -205,6 +218,27 @@ describeWithDb('DepositsService (PostgreSQL)', () => {
 
       expect(ledgerByKey.size).toBe(1);
       expect(await statusOf(created.id)).toBe('APPROVED');
+    });
+
+    it('métricas: el pago aprobado se cuenta una sola vez aunque el webhook llegue repetido y a la vez', async () => {
+      const created = await createDeposit();
+      const tx = wompiTx(created.reference);
+
+      await service.handleEvent(event(tx), undefined);
+      await Promise.all([service.handleEvent(event(tx), undefined), service.handleEvent(event(tx), undefined)]);
+
+      expect(await paymentsCounted()).toEqual({ approved: 1 });
+    });
+
+    it('métricas: un pago declinado, anulado o con error se cuenta una vez cada uno, y un pago pendiente no cuenta', async () => {
+      for (const status of ['DECLINED', 'VOIDED', 'ERROR', 'PENDING']) {
+        const created = await createDeposit();
+        const tx = wompiTx(created.reference, { status: status as WompiTransaction['status'] });
+        await service.handleEvent(event(tx), undefined);
+        await service.handleEvent(event(tx), undefined);
+      }
+
+      expect(await paymentsCounted()).toEqual({ declined: 1, voided: 1, error: 1 });
     });
 
     it('si el ledger no responde: 503 para que Wompi reintente, y el reintento usa la misma clave', async () => {
