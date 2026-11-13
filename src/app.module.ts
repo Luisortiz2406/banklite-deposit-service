@@ -6,6 +6,7 @@ import { DepositsModule } from './deposits/deposits.module';
 import { Deposit } from './deposits/entities/deposit.entity';
 import { HealthController } from './health.controller';
 import { readWompiConfig } from './wompi/wompi.config';
+import { MetricsModule } from './metrics/metrics.module';
 
 const validateCommon = validateEnv(
   [
@@ -20,6 +21,7 @@ const validateCommon = validateEnv(
 
 @Module({
   imports: [
+    MetricsModule,
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
